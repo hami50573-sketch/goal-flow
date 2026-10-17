@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GoalFlow</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<section id="auth-screen" class="auth-screen" hidden>
+  <div class="auth-card">
+    <a class="brand auth-brand" href="#"><span class="brand-mark">G</span><span><strong>GoalFlow</strong><small>PERSONAL WORKSPACE</small></span></a>
+    <span class="eyebrow">YOUR PRIVATE WORKSPACE</span>
+    <h1 id="auth-title">Welcome back.</h1>
+    <p id="auth-copy">Sign in to continue where your goals left off.</p>
+    <form id="auth-form">
+      <label>Email address<input name="email" type="email" autocomplete="email" required placeholder="you@example.com"></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password" minlength="8" required placeholder="At least 8 characters"></label>
+      <button class="primary auth-submit" type="submit">Sign in</button>
+    </form>
+    <button id="auth-switch" class="auth-switch" type="button">New to GoalFlow? Create an account</button>
+    <button id="reset-password" class="auth-switch" type="button">Forgot password?</button>
+    <button id="auth-retry" class="auth-switch" type="button" hidden>Retry loading workspace</button>
+    <p id="auth-message" class="auth-message" role="status" aria-live="polite"></p>
+  </div>
+</section>
+<div id="app-shell" hidden>
+<aside class="side">
+  <a class="brand" href="#" onclick="navigate('dashboard');return false"><span class="brand-mark">G</span><span><strong>GoalFlow</strong><small>PERSONAL WORKSPACE</small></span></a>
+  <div class="nav-label">WORKSPACE</div>
+  <nav id="nav">
+    <button data-p="dashboard" class="on"><span class="nav-icon">⌂</span>Overview</button>
+    <button data-p="tasks"><span class="nav-icon">▤</span>My Tasks</button>
+    <button data-p="board"><span class="nav-icon">▥</span>Task Board</button>
+    <button data-p="week"><span class="nav-icon">▦</span>Weekly Planner</button>
+    <button data-p="projects"><span class="nav-icon">◇</span>Projects</button>
+    <button data-p="focus"><span class="nav-icon">◷</span>Focus Timer</button>
+    <button data-p="stats"><span class="nav-icon">↗</span>Analytics</button>
+  </nav>
+  <div class="side-bottom"><div class="side-note"><span class="live-dot"></span><span><b>Your space, in flow</b><small>Small steps. Remarkable progress.</small></span></div>
+    <button data-p="settings" class="settings-link"><span class="nav-icon">⚙</span>Settings</button>
+    <button id="theme" class="ghost theme-toggle"><span>◐</span> Switch appearance</button>
+    <span id="user-email" class="user-email"></span>
+    <button id="logout" class="settings-link"><span class="nav-icon">↪</span>Sign out</button>
+  </div>
+</aside>
+<main>
+  <header><div id="hello"></div><div class="header-actions"><span class="today-chip" id="date-chip"></span><button id="add" class="primary"><span>＋</span> New task</button></div></header>
+  <section id="view"></section>
+</main>
+<dialog id="dlg">
+  <form id="form" method="dialog">
+    <h2 id="dtitle">New task</h2>
+    <label>Title<input name="title" required></label>
+    <label>Description<textarea name="desc" rows="2"></textarea></label>
+    <div class="row">
+      <label>Date<input type="date" name="date" required></label>
+      <label>Deadline<input type="date" name="deadline"></label>
+    </div>
+    <div class="row">
+      <label>Goal type<select name="type"><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
+      <label>Weekly goal<select name="goalId"><option value="">No weekly goal</option></select></label>
+    </div>
+    <div class="row">
+      <label>Project<select name="projectId"><option value="">No project</option></select></label>
+      <label>Priority<select name="priority"><option>Low</option><option selected>Medium</option><option>High</option></select></label>
+    </div>
+    <div class="row">
+      <label>Status<select name="status"><option value="pending">Pending</option><option value="progress">In Progress</option><option value="done">Completed</option></select></label>
+      <label>Category<select name="cat"><option>Client Work</option><option>Genghix Tech</option><option>Learning</option><option>Personal</option><option>Health &amp; Fitness</option></select></label>
+      <label>Estimated minutes<input type="number" name="est" min="0" value="30"></label>
+    </div>
+    <div class="row">
+      <label>Reminder (optional)<input type="time" name="remind"></label>
+    </div>
+    <div class="row end"><button type="button" class="ghost" id="cancel">Cancel</button><button class="primary">Save task</button></div>
+  </form>
+</dialog>
+<dialog id="goal-dlg">
+  <form id="goal-form" method="dialog">
+    <h2 id="goal-dtitle">New weekly goal</h2>
+    <label>Goal title<input name="title" required maxlength="120" placeholder="e.g. Finish the project dashboard"></label>
+    <label>Goal description<textarea name="description" rows="3" maxlength="500" placeholder="What does success look like?"></textarea></label>
+    <input type="hidden" name="weekStart">
+    <div class="row end"><button type="button" class="ghost" id="goal-cancel">Cancel</button><button class="primary">Save goal</button></div>
+  </form>
+</dialog>
+<dialog id="project-dlg">
+  <form id="project-form" method="dialog">
+    <h2 id="project-dtitle">New project</h2>
+    <label>Project name<input name="name" required maxlength="100" placeholder="e.g. Website redesign"></label>
+    <label>Short description<textarea name="description" rows="3" maxlength="300" placeholder="What are you working toward?"></textarea></label>
+    <label>Accent color<select name="color"><option value="violet">Violet</option><option value="blue">Blue</option><option value="mint">Mint</option><option value="gold">Gold</option><option value="rose">Rose</option></select></label>
+    <div class="row end"><button type="button" class="ghost" id="project-cancel">Cancel</button><button class="primary">Save project</button></div>
+  </form>
+</dialog>
+<input type="file" id="import-file" accept="application/json,.json" hidden>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>
