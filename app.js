@@ -7,13 +7,53 @@ const ST={pending:'Pending',progress:'In Progress',done:'Completed'};
 let tasks=[],goals=[],projects=[],currentUser=null,dataReady=false,loadingUserId='',authGeneration=0;
 let page='dashboard',editId=null,editProjectId=null,selectedProjectId='',flt={q:'',status:'',cat:''};
 const supabaseUrl=import.meta.env.VITE_SUPABASE_URL?.trim();
-const supabaseKey=import.meta.env.VITE_SUPABASE_ANON_KEY?.trim();
+const supabaseKey=(import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY||import.meta.env.VITE_SUPABASE_ANON_KEY)?.trim();
 const supabase=supabaseUrl&&supabaseKey?createClient(supabaseUrl,supabaseKey):null;
+const vapidPublicKey=import.meta.env.VITE_SUPABASE_VAPID_PUBLIC_KEY?.trim();
 const writeQueues={tasks:Promise.resolve(),goals:Promise.resolve(),projects:Promise.resolve()};
+let remindersEnabled=false,reminderBusy=false;
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const pct=(a,b)=>b?Math.round(a/b*100):0;
 let toastTimer;
 function notify(message){const toast=$('#toast');toast.textContent=message;toast.classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>toast.classList.remove('visible'),5000)}
+function pushSupported(){return 'serviceWorker'in navigator&&'PushManager'in window&&'Notification'in window}
+function decodeVapidKey(key){const base64=key.replace(/-/g,'+').replace(/_/g,'/'),raw=atob(base64),bytes=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);return bytes}
+async function refreshReminderStatus(){
+  remindersEnabled=false;
+  if(!pushSupported()||!currentUser)return;
+  const registration=await navigator.serviceWorker.getRegistration('/');
+  const subscription=await registration?.pushManager.getSubscription();
+  if(!subscription)return;
+  const {data,error}=await supabase.from('push_subscriptions').select('endpoint').eq('user_id',currentUser.id).eq('endpoint',subscription.endpoint).maybeSingle();
+  if(error)throw error;
+  remindersEnabled=Boolean(data);
+}
+async function toggleReminders(){
+  if(reminderBusy)return;
+  if(!supabase||!currentUser){notify('Sign in to manage your reminders.');return}
+  if(!pushSupported()){notify('Push reminders are not supported in this browser.');return}
+  if(!vapidPublicKey){notify('Add VITE_SUPABASE_VAPID_PUBLIC_KEY to your Vercel environment variables and redeploy.');return}
+  reminderBusy=true;
+  const button=$('#reminder-toggle');if(button)button.disabled=true;
+  try{
+    const registration=await navigator.serviceWorker.register('/sw.js');
+    let subscription=await registration.pushManager.getSubscription();
+    if(remindersEnabled){
+      if(subscription){const {error}=await supabase.from('push_subscriptions').delete().eq('user_id',currentUser.id).eq('endpoint',subscription.endpoint);if(error)throw error;
+        remindersEnabled=false;const unsubscribed=await subscription.unsubscribe();if(!unsubscribed)throw new Error('The browser could not remove this push subscription.')}
+      else remindersEnabled=false;
+      notify('Hourly reminders are off for this browser.')
+    }else{
+      const permission=Notification.permission==='granted'? 'granted':await Notification.requestPermission();
+      if(permission!=='granted')throw new Error(permission==='denied'?'Notifications are blocked in browser settings. Allow them for GoalFlow, then try again.':'Notification permission was not granted.');
+      if(!subscription)subscription=await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:decodeVapidKey(vapidPublicKey)});
+      const {error}=await supabase.from('push_subscriptions').upsert({user_id:currentUser.id,endpoint:subscription.endpoint,subscription:subscription.toJSON(),timezone:Intl.DateTimeFormat().resolvedOptions().timeZone},{onConflict:'endpoint'});
+      if(error)throw error;
+      remindersEnabled=true;notify('Hourly reminders enabled. They arrive from 8am to 10pm when tasks remain incomplete.')
+    }
+  }catch(error){console.error('GoalFlow reminder setup failed:',error);notify(error.message||'Could not update push reminders. Check browser permissions and Supabase setup.')}
+  finally{reminderBusy=false;render()}
+}
 function showAuthMessage(message,isError=false){const el=$('#auth-message');el.textContent=message;el.classList.toggle('error',isError)}
 function queueWrite(table,operation){
   const next=writeQueues[table].then(operation);
@@ -87,14 +127,16 @@ async function handleSession(session){
 }
 $('#logout').onclick=async()=>{await Promise.all(Object.values(writeQueues));const {error}=await supabase.auth.signOut();if(error)notify(`Could not sign out. ${error.message}`)};
 $('#auth-retry').onclick=async()=>{const {data,error}=await supabase.auth.getSession();if(error)showAuthMessage(error.message,true);else await handleSession(data.session)};
-if(!supabase){$('#auth-screen').hidden=false;showAuthMessage('Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env.local for development and to Vercel Environment Variables for deployment.',true);$('#auth-form button[type="submit"]').disabled=true;$('#auth-switch').hidden=true;$('#reset-password').hidden=true}
+if(!supabase){$('#auth-screen').hidden=false;showAuthMessage('Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY to .env.local for development and to Vercel Environment Variables for deployment.',true);$('#auth-form button[type="submit"]').disabled=true;$('#auth-switch').hidden=true;$('#reset-password').hidden=true}
 else{
   supabase.auth.onAuthStateChange((_event,session)=>{setTimeout(()=>handleSession(session),0)});
   supabase.auth.getSession().then(({data,error})=>{if(error)showAuthMessage(error.message,true);else handleSession(data.session)}).catch(error=>showAuthMessage(error.message||'Could not check your sign-in session.',true))
 }
 
 // nav
-function navigate(p){page=p;document.querySelectorAll('#nav button,[data-p="settings"]').forEach(b=>b.classList.toggle('on',b.dataset.p===p||(p==='project-detail'&&b.dataset.p==='projects')));render()}
+async function navigate(p){page=p;document.querySelectorAll('#nav button,[data-p="settings"]').forEach(b=>b.classList.toggle('on',b.dataset.p===p||(p==='project-detail'&&b.dataset.p==='projects')));
+  if(p==='settings')try{await refreshReminderStatus()}catch(error){console.error('GoalFlow could not load reminder status:',error);notify(`Could not load reminder settings. ${error.message||'Check the push_subscriptions table.'}`)}
+  render()}
 $('#nav').onclick=e=>{const b=e.target.closest('button[data-p]');if(b)navigate(b.dataset.p)};
 document.querySelector('[data-p="settings"]').onclick=()=>navigate('settings');
 
@@ -216,9 +258,13 @@ projectDetail(){const p=projects.find(x=>x.id===selectedProjectId);if(!p)return 
   <div class="section-head"><div><h3>Project tasks</h3><p>Keep momentum, one step at a time.</p></div><button class="primary" onclick="openForm(null,'','${p.id}')">＋ Add task</button></div>${list(a)}`},
 focus(){return `<div class="card timer"><div class="big" id="tm">25:00</div><p>Stay on one task. Work for 25 minutes, then rest.</p>
   <button class="primary" id="tgo">Start</button> <button class="ghost" id="trs">Reset</button></div>`},
-settings(){return `<div class="settings-grid"><article class="card settings-card"><h3>Appearance</h3><p>Choose the look that feels right for your workspace. Your preference is saved on this device.</p><div class="settings-actions"><button class="ghost" onclick="setTheme('dark')">Midnight</button><button class="ghost" onclick="setTheme('light')">Daylight</button></div></article>
+settings(){const available=pushSupported()&&Boolean(vapidPublicKey);
+  return `<div class="settings-grid"><article class="card settings-card"><h3>Hourly reminders</h3><p>Get a browser notification each hour while any task is unfinished. Quiet hours are 10pm–8am in your local timezone.</p>
+  <div class="settings-actions"><button id="reminder-toggle" class="${remindersEnabled?'ghost':'primary'}" onclick="toggleReminders()" ${(!available&&!remindersEnabled)||reminderBusy?'disabled':''}>${reminderBusy?'Updating…':remindersEnabled?'Turn reminders off':'Enable hourly reminders'}</button></div>
+  <small>${!pushSupported()?'This browser does not support push notifications.':!vapidPublicKey?'Configure the VAPID public key and redeploy to enable push.':remindersEnabled?'Enabled for this browser. Background delivery also needs the Supabase reminder scheduler configured.':'Permission is requested only after you enable reminders.'}</small></article>
+  <article class="card settings-card"><h3>Appearance</h3><p>Choose the look that feels right for your workspace. Your preference is saved on this device.</p><div class="settings-actions"><button class="ghost" onclick="setTheme('dark')">Midnight</button><button class="ghost" onclick="setTheme('light')">Daylight</button></div></article>
   <article class="card settings-card"><h3>Your data</h3><p>Your work is stored in your Supabase account. Export a backup before moving to another account.</p><div class="settings-actions"><button class="primary" onclick="exportData()">Export backup</button><button class="ghost" onclick="document.querySelector('#import-file').click()">Import backup</button></div></article>
-  <article class="card settings-card"><h3>Workspace at a glance</h3><p>${tasks.length} tasks · ${goals.length} weekly goals · ${projects.length} projects</p><small>GoalFlow keeps your planning data on this device; cloud sync is not enabled.</small></article></div>`},
+  <article class="card settings-card"><h3>Workspace at a glance</h3><p>${tasks.length} tasks · ${goals.length} weekly goals · ${projects.length} projects</p><small>Your planning data is synced securely to your Supabase account.</small></article></div>`},
 stats(){const wd=weekDates(),N=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'],c=wd.map(d=>tasks.filter(t=>t.completedAt===d).length),mx=Math.max(1,...c),best=c.indexOf(Math.max(...c));
   const prev=wd.map(d=>{const x=new Date(d);x.setDate(x.getDate()-7);return iso(x)}),pc=prev.reduce((s,d)=>s+tasks.filter(t=>t.completedAt===d).length,0),tc=c.reduce((a,b)=>a+b,0);
   return `<div class="grid"><div class="card"><h3>Total completed</h3><div class="big">${tasks.filter(t=>t.status==='done').length}</div></div>
@@ -246,5 +292,5 @@ function render(){
   if(page==='focus')bindFocus();
   if(page==='tasks'){const r=()=>{flt.q=$('#fq').value;flt.status=$('#fs').value;flt.cat=$('#fc').value;const p=$('#fq').selectionStart;render();$('#fq').focus();$('#fq').setSelectionRange(p,p)};$('#fq').oninput=r;$('#fs').onchange=r;$('#fc').onchange=r}
 }
-Object.assign(window,{navigate,setTheme,setStatus,del,resched,openForm,openGoalForm,deleteGoal,openProjectForm,deleteProject,openProject,exportData});
+Object.assign(window,{navigate,setTheme,setStatus,del,resched,openForm,openGoalForm,deleteGoal,openProjectForm,deleteProject,openProject,exportData,toggleReminders});
 render();
